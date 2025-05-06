@@ -273,6 +273,16 @@ void efa_cq_poll_ibv_cq(ssize_t cqe_to_process, struct efa_ibv_cq *ibv_cq)
 	while (!err) {
 		base_ep = efa_domain->qp_table[ibv_wc_read_qp_num(cq->ibv_cq.ibv_cq_ex) & efa_domain->qp_table_sz_m1]->base_ep;
 		opcode = ibv_wc_read_opcode(cq->ibv_cq.ibv_cq_ex);
+
+		if (cq->ibv_cq.ibv_cq_ex->status) {
+			prov_errno = ibv_wc_read_vendor_err(cq->ibv_cq.ibv_cq_ex);
+		} else {
+			prov_errno = 0;
+		}
+
+		printf("EFA CQ completion: opcode=%d status=%d vendor_err=%d status=%d\n", 
+			opcode, cq->ibv_cq.ibv_cq_ex->status, prov_errno, cq->ibv_cq.ibv_cq_ex->status);
+
 		if (cq->ibv_cq.ibv_cq_ex->status) {
 			prov_errno = ibv_wc_read_vendor_err(cq->ibv_cq.ibv_cq_ex);
 			switch (opcode) {

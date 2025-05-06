@@ -11,6 +11,7 @@
 
 #include "efa.h"
 #include "efa_av.h"
+#include "efa_domain.h"
 #include "rdm/efa_rdm_pke_utils.h"
 
 /*
@@ -169,10 +170,13 @@ struct efa_ah *efa_ah_alloc(struct efa_av *av, const uint8_t *gid)
 	struct efadv_ah_attr efa_ah_attr = { 0 };
 	int err;
 
+	/* Use domain-level lock for shared ah_map */
+	ofi_genlock_lock(&av->domain->ah_map_lock);
 	efa_ah = NULL;
-	HASH_FIND(hh, av->ah_map, gid, EFA_GID_LEN, efa_ah);
+	HASH_FIND(hh, av->domain->ah_map, gid, EFA_GID_LEN, efa_ah);
 	if (efa_ah) {
 		efa_ah->refcnt += 1;
+		ofi_genlock_unlock(&av->domain->ah_map_lock);
 		return efa_ah;
 	}
 
@@ -180,6 +184,7 @@ struct efa_ah *efa_ah_alloc(struct efa_av *av, const uint8_t *gid)
 	if (!efa_ah) {
 		errno = FI_ENOMEM;
 		EFA_WARN(FI_LOG_AV, "cannot allocate memory for efa_ah\n");
+		ofi_genlock_unlock(&av->domain->ah_map_lock);
 		return NULL;
 	}
 
@@ -202,13 +207,15 @@ struct efa_ah *efa_ah_alloc(struct efa_av *av, const uint8_t *gid)
 	efa_ah->refcnt = 1;
 	efa_ah->ahn = efa_ah_attr.ahn;
 	memcpy(efa_ah->gid, gid, EFA_GID_LEN);
-	HASH_ADD(hh, av->ah_map, gid, EFA_GID_LEN, efa_ah);
+	HASH_ADD(hh, av->domain->ah_map, gid, EFA_GID_LEN, efa_ah);
+	ofi_genlock_unlock(&av->domain->ah_map_lock);
 	return efa_ah;
 
 err_destroy_ibv_ah:
 	ibv_destroy_ah(efa_ah->ibv_ah);
 err_free_efa_ah:
 	free(efa_ah);
+	ofi_genlock_unlock(&av->domain->ah_map_lock);
 	return NULL;
 }
 
@@ -222,21 +229,24 @@ static
 void efa_ah_release(struct efa_av *av, struct efa_ah *ah)
 {
 	int err;
+
+	ofi_genlock_lock(&av->domain->ah_map_lock);
 #if ENABLE_DEBUG
 	struct efa_ah *tmp;
 
-	HASH_FIND(hh, av->ah_map, ah->gid, EFA_GID_LEN, tmp);
+	HASH_FIND(hh, av->domain->ah_map, ah->gid, EFA_GID_LEN, tmp);
 	assert(tmp == ah);
 #endif
 	assert(ah->refcnt > 0);
 	ah->refcnt -= 1;
 	if (ah->refcnt == 0) {
-		HASH_DEL(av->ah_map, ah);
+		HASH_DEL(av->domain->ah_map, ah);
 		err = ibv_destroy_ah(ah->ibv_ah);
 		if (err)
 			EFA_WARN(FI_LOG_AV, "ibv_destroy_ah failed! err=%d\n", err);
 		free(ah);
 	}
+	ofi_genlock_unlock(&av->domain->ah_map_lock);
 }
 
 static

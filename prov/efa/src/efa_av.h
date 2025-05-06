@@ -8,6 +8,9 @@
 #include "rdm/efa_rdm_protocol.h"
 #include "rdm/efa_rdm_peer.h"
 
+/* Forward declaration to avoid circular dependency */
+struct efa_ah;
+
 #define EFA_MIN_AV_SIZE (16384)
 #define EFA_SHM_MAX_AV_COUNT       (256)
 
@@ -67,7 +70,6 @@ struct efa_av {
 	 */
 	struct efa_cur_reverse_av *cur_reverse_av;
 	struct efa_prv_reverse_av *prv_reverse_av;
-	struct efa_ah *ah_map;
 	struct util_av util_av;
 	struct ofi_bufpool *rdm_peer_pool;
 };

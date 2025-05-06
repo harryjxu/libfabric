@@ -41,6 +41,10 @@ struct efa_domain {
 	 * efa-direct paths */
 	enum efa_domain_info_type info_type;
 
+	/* Shared AH map and its lock for all AV instances */
+	struct efa_ah *ah_map;
+	struct ofi_genlock ah_map_lock;
+
 	size_t			rdm_cq_size;
 	/* number of rdma-read messages in flight */
 	uint64_t		num_read_msg_in_flight;

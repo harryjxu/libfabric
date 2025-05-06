@@ -203,6 +203,16 @@ int efa_domain_open(struct fid_fabric *fabric_fid, struct fi_info *info,
 	efa_domain->ibv_mr_reg_ct = 0;
 	efa_domain->ibv_mr_reg_sz = 0;
 
+	/* Initialize shared ah_map at domain level */
+	efa_domain->ah_map = NULL;
+	err = ofi_genlock_init(&efa_domain->ah_map_lock, efa_domain->util_domain.threading != FI_THREAD_SAFE ?
+			       OFI_LOCK_NOOP : OFI_LOCK_MUTEX);
+	if (err) {
+		EFA_WARN(FI_LOG_DOMAIN, "ah_map_lock init failed! err: %d\n", err);
+		ret = err;
+		goto err_free;
+	}
+
 	err = ofi_genlock_init(&efa_domain->srx_lock, efa_domain->util_domain.threading != FI_THREAD_SAFE ?
 			       OFI_LOCK_NOOP : OFI_LOCK_MUTEX);
 	if (err) {
@@ -335,6 +345,21 @@ static int efa_domain_close(fid_t fid)
 				  util_domain.domain_fid.fid);
 
 	dlist_remove(&efa_domain->list_entry);
+
+	/* Clean up domain-level ah_map if any entries remain */
+	if (efa_domain->ah_map) {
+		struct efa_ah *ah_entry, *tmp;
+		
+		EFA_WARN(FI_LOG_DOMAIN, "AH map not empty during domain close! Cleaning up...\n");
+		HASH_ITER(hh, efa_domain->ah_map, ah_entry, tmp) {
+			int err = ibv_destroy_ah(ah_entry->ibv_ah);
+			if (err)
+				EFA_WARN(FI_LOG_DOMAIN, "ibv_destroy_ah failed during cleanup! err=%d\n", err);
+			HASH_DEL(efa_domain->ah_map, ah_entry);
+			free(ah_entry);
+		}
+	}
+	ofi_genlock_destroy(&efa_domain->ah_map_lock);
 
 	if (efa_domain->cache) {
 		ofi_mr_cache_cleanup(efa_domain->cache);
