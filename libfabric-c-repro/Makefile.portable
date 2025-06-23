@@ -1,0 +1,116 @@
+# Portable Makefile for libfabric endpoint close bug reproduction
+# This can be used with any libfabric installation
+#
+# Usage:
+#   make -f Makefile.portable
+#   make -f Makefile.portable LIBFABRIC_PREFIX=/opt/amazon/efa
+#   make -f Makefile.portable LIBFABRIC_PREFIX=/usr/local
+#
+# For custom libfabric.so:
+#   make -f Makefile.portable LIBFABRIC_LIB=/path/to/libfabric.so LIBFABRIC_INC=/path/to/include
+
+# Compiler and base flags
+CC = gcc
+CFLAGS = -Wall -Wextra -g -O0 -pthread -DPORTABLE_BUILD
+LDFLAGS = -pthread
+
+# Directories
+SRC_DIR = src
+INC_DIR = include
+BUILD_DIR = build_portable
+
+# Allow user to specify libfabric location
+ifdef LIBFABRIC_PREFIX
+    LIBFABRIC_INC ?= $(LIBFABRIC_PREFIX)/include
+    LIBFABRIC_LIB ?= $(LIBFABRIC_PREFIX)/lib64/libfabric.so
+    ifeq ($(wildcard $(LIBFABRIC_LIB)),)
+        LIBFABRIC_LIB = $(LIBFABRIC_PREFIX)/lib/libfabric.so
+    endif
+endif
+
+# Allow direct specification of library
+ifdef LIBFABRIC_LIB
+    LIBFABRIC_DIR := $(dir $(LIBFABRIC_LIB))
+    CFLAGS += -I$(LIBFABRIC_INC) -I$(INC_DIR)
+    LDFLAGS += $(LIBFABRIC_LIB) -Wl,-rpath,$(LIBFABRIC_DIR)
+else
+    # Try pkg-config
+    FABRIC_CFLAGS := $(shell pkg-config --cflags libfabric 2>/dev/null)
+    FABRIC_LDFLAGS := $(shell pkg-config --libs libfabric 2>/dev/null)
+    ifneq ($(FABRIC_LDFLAGS),)
+        CFLAGS += $(FABRIC_CFLAGS) -I$(INC_DIR)
+        LDFLAGS += $(FABRIC_LDFLAGS)
+    else
+        # Try standard locations
+        ifneq ($(wildcard /opt/amazon/efa/lib64/libfabric.so),)
+            LIBFABRIC_PREFIX = /opt/amazon/efa
+            LIBFABRIC_INC = $(LIBFABRIC_PREFIX)/include
+            LIBFABRIC_LIB = $(LIBFABRIC_PREFIX)/lib64/libfabric.so
+            CFLAGS += -I$(LIBFABRIC_INC) -I$(INC_DIR)
+            LDFLAGS += $(LIBFABRIC_LIB) -Wl,-rpath,$(dir $(LIBFABRIC_LIB))
+        else ifneq ($(wildcard /usr/lib64/libfabric.so),)
+            CFLAGS += -I/usr/include -I$(INC_DIR)
+            LDFLAGS += -lfabric
+        else
+            $(error Cannot find libfabric. Please specify LIBFABRIC_PREFIX or LIBFABRIC_LIB)
+        endif
+    endif
+endif
+
+# Just the bug reproduction program for simplicity
+PROGRAM = repro_bug
+OBJS = $(BUILD_DIR)/repro_bug.o $(BUILD_DIR)/completion_thread.o
+
+# Default target
+all: check-env $(BUILD_DIR)/$(PROGRAM)
+
+# Check environment
+check-env:
+	@echo "=== Portable Build Configuration ==="
+	@echo "LIBFABRIC_PREFIX: $(LIBFABRIC_PREFIX)"
+	@echo "LIBFABRIC_INC: $(LIBFABRIC_INC)"
+	@echo "LIBFABRIC_LIB: $(LIBFABRIC_LIB)"
+	@echo "CFLAGS: $(CFLAGS)"
+	@echo "LDFLAGS: $(LDFLAGS)"
+	@echo "===================================="
+
+# Build directory
+$(BUILD_DIR):
+	mkdir -p $(BUILD_DIR)
+
+# Build object files
+$(BUILD_DIR)/%.o: $(SRC_DIR)/%.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+# Link program
+$(BUILD_DIR)/$(PROGRAM): $(OBJS)
+	$(CC) $(OBJS) -o $@ $(LDFLAGS)
+
+# Clean
+clean:
+	rm -rf $(BUILD_DIR)
+
+# Run the test
+run: $(BUILD_DIR)/$(PROGRAM)
+	@echo "Running endpoint close bug reproduction..."
+	@echo "This should trigger: ofi_buf_is_valid assertion"
+	@echo "=========================================="
+	$(BUILD_DIR)/$(PROGRAM)
+
+# Help
+help:
+	@echo "Portable libfabric endpoint close bug reproduction"
+	@echo ""
+	@echo "Usage:"
+	@echo "  make -f Makefile.portable                    # Auto-detect libfabric"
+	@echo "  make -f Makefile.portable LIBFABRIC_PREFIX=/opt/amazon/efa"
+	@echo "  make -f Makefile.portable LIBFABRIC_LIB=/path/to/libfabric.so LIBFABRIC_INC=/path/to/include"
+	@echo ""
+	@echo "Example for AWS EFA:"
+	@echo "  make -f Makefile.portable LIBFABRIC_PREFIX=/opt/amazon/efa"
+	@echo "  make -f Makefile.portable run"
+	@echo ""
+	@echo "Example for custom build:"
+	@echo "  make -f Makefile.portable LIBFABRIC_LIB=~/libfabric/build/lib/libfabric.so.1 LIBFABRIC_INC=~/libfabric/include"
+
+.PHONY: all clean check-env run help
